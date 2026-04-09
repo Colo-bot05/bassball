@@ -1,4 +1,4 @@
-import type { Player, PitcherRole, Position } from './player';
+import type { Position } from './player';
 
 /** リーグ */
 export type League = 'central' | 'pacific';
