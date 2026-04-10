@@ -11,6 +11,9 @@ import { checkInjury, healInjury, updateAwakeningGaugeFromInjury } from '@/engin
 import { applyYearlyGrowth, applyDecline, checkAwakening, checkRetirement } from '@/engine/growth';
 import { processOffseason as runOffseason } from '@/engine/offseason';
 import { autoSave, loadGame, listSaveSlots, exportSaveToJson, importSaveFromJson, saveGame } from '@/data/saveManager';
+import { runPostseason } from '@/engine/postseason';
+import type { PostseasonResult } from '@/engine/postseason';
+import { DIFFICULTY_MODIFIERS } from '@/constants/balance';
 import { TitleScreen } from '@/components/title/TitleScreen';
 import { HomeScreen } from '@/components/home/HomeScreen';
 import { GameResultView } from '@/components/game/GameResultView';
@@ -40,6 +43,8 @@ interface AppState {
   difficulty: 'easy' | 'normal' | 'hard';
   events: GameEvent[];
   hasSaveData: boolean;
+  postseasonResult: PostseasonResult | null;
+  showPostseason: boolean;
 }
 
 /** 個人成績をPlayerに書き戻す */
@@ -71,7 +76,8 @@ function accumulatePlayerStats(players: Player[], results: GameResult[]): void {
 }
 
 /** カード進行時に調子・怪我・覚醒ゲージを更新 */
-function processCardEffects(players: Player[], events: GameEvent[], year: number, cardNumber: number): void {
+function processCardEffects(players: Player[], events: GameEvent[], year: number, cardNumber: number, difficulty: 'easy' | 'normal' | 'hard'): void {
+  const diffMod = DIFFICULTY_MODIFIERS[difficulty];
   const hasMoodMaker = players.some(
     (p) => p.isFirstTeam && p.normalAbilities.includes('moodMaker'),
   );
@@ -105,7 +111,9 @@ function processCardEffects(players: Player[], events: GameEvent[], year: number
     // 怪我判定
     if (!player.injury.isInjured) {
       const injuryResult = checkInjury(player, !player.isFirstTeam);
-      if (injuryResult.injured) {
+      // 難易度による怪我確率補正（easyなら0.7倍で怪我しにくい）
+      const injuryHappens = injuryResult.injured && Math.random() < diffMod.injuryMultiplier;
+      if (injuryHappens) {
         player.injury = {
           isInjured: true,
           name: injuryResult.name,
@@ -185,7 +193,7 @@ function simulateOneCard(prev: AppState): AppState {
 
   // 調子・怪我・覚醒を更新
   const newEvents = [...prev.events];
-  processCardEffects(prev.players, newEvents, prev.year, prev.currentCard + 1);
+  processCardEffects(prev.players, newEvents, prev.year, prev.currentCard + 1, prev.difficulty);
 
   const newSchedule = [...prev.schedule];
   newSchedule[prev.currentCard] = { ...card, results };
@@ -213,6 +221,8 @@ function App() {
     difficulty: 'normal',
     events: [],
     hasSaveData: false,
+    postseasonResult: null,
+    showPostseason: false,
   });
 
   // 起動時にセーブデータの有無をチェック
@@ -254,6 +264,8 @@ function App() {
         difficulty,
         events: [],
         hasSaveData: false,
+        postseasonResult: null,
+        showPostseason: false,
       });
     },
     [],
@@ -319,17 +331,50 @@ function App() {
     };
   }, [state]);
 
+  /** CS・日本シリーズを実行 */
+  const runPostseasonHandler = useCallback(() => {
+    setState((prev) => {
+      const result = runPostseason(prev.teams, prev.players);
+      const champion = prev.teams.find((t) => t.id === result.champion);
+      const events: GameEvent[] = [
+        ...prev.events,
+        {
+          id: generateId(),
+          type: 'milestone' as const,
+          title: `${champion?.name ?? ''}が日本一！`,
+          message: `${prev.year}年日本シリーズを制しました！`,
+          date: { year: prev.year, month: 10, cardNumber: 0 },
+          playerId: null,
+          teamId: result.champion,
+          isRead: false,
+        },
+      ].slice(-20);
+      return {
+        ...prev,
+        postseasonResult: result,
+        showPostseason: true,
+        events,
+        screen: 'game' as Screen,
+        recentResults: result.japanSeriesResult.games.slice(-1),
+      };
+    });
+  }, []);
+
   /** オフシーズン処理（実際のエンジンを使用） */
   const processOffseason = useCallback(() => {
     setState((prev) => {
       const gameState = buildGameState();
 
-      // 年間成長・衰えを適用
+      const diffMod = DIFFICULTY_MODIFIERS[prev.difficulty];
+
+      // 年間成長・衰えを適用（難易度補正付き）
       for (const player of prev.players) {
         const team = prev.teams.find((t) => t.playerIds.includes(player.id));
+        const isPlayerTeam = team?.id === prev.playerTeamId;
         const facilityBonus = team ? (team.facilities.training - 1) * 0.05 : 0;
         const dormBonus = team && player.age <= 25 ? (team.facilities.dormitory - 1) * 0.03 : 0;
-        applyYearlyGrowth(player, facilityBonus, dormBonus);
+        const growthMult = isPlayerTeam ? diffMod.growthMultiplier : 1.0;
+        applyYearlyGrowth(player, facilityBonus * growthMult, dormBonus * growthMult);
         applyDecline(player);
       }
 
@@ -418,6 +463,8 @@ function App() {
         players: activePlayers,
         screen: 'home',
         events: allEvents,
+        postseasonResult: null,
+        showPostseason: false,
       };
     });
   }, [buildGameState]);
@@ -457,6 +504,8 @@ function App() {
       difficulty: gameState.difficulty,
       events: gameState.events,
       hasSaveData: true,
+      postseasonResult: null,
+      showPostseason: false,
     });
   }, []);
 
@@ -495,6 +544,8 @@ function App() {
           difficulty: gameState.difficulty,
           events: gameState.events,
           hasSaveData: true,
+          postseasonResult: null,
+          showPostseason: false,
         });
       } catch {
         alert('セーブデータの読み込みに失敗しました');
@@ -534,7 +585,8 @@ function App() {
           onAdvanceCard={advanceCard}
           onAdvanceMonth={advanceMonth}
           isSeasonOver={isSeasonOver}
-          onProcessOffseason={processOffseason}
+          onProcessOffseason={state.postseasonResult ? processOffseason : runPostseasonHandler}
+          postseasonDone={!!state.postseasonResult}
         />
       ) : null;
 
