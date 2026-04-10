@@ -175,10 +175,10 @@ function calculateBatterStats(row: CsvPlayerRow): BatterStats {
   const obp = row.obp ?? 0.320;
   const pos = parsePosition(row.position);
 
-  const meet = Math.min(100, Math.max(1, Math.round(avg * 250 + 15)));
-  const power = Math.min(100, Math.max(1, Math.round(hr * 1.5 + 30)));
-  const speed = Math.min(100, Math.max(1, Math.round(sb * 1.2 + 35)));
-  const eye = Math.min(100, Math.max(1, Math.round(obp * 200 + 10)));
+  const meet = Math.min(100, Math.max(1, Math.round((avg - 0.180) * 350)));
+  const power = Math.min(100, Math.max(1, Math.round(hr * 1.2 + 10)));
+  const speed = Math.min(100, Math.max(1, Math.round(sb * 1.5 + 20)));
+  const eye = Math.min(100, Math.max(1, Math.round((obp - 0.250) * 300)));
 
   const fieldingBase: Record<string, number> = {
     C: 65, SS: 65, '2B': 60, '3B': 55, CF: 55, LF: 50, RF: 50, '1B': 45, DH: 30, P: 30,
@@ -201,9 +201,9 @@ function calculatePitcherStats(row: CsvPlayerRow): PitcherStats {
   const isStarter = (row.role ?? 'starter') === 'starter' || (row.saves ?? 0) === 0;
 
   const kRate = ip > 0 ? k / ip : 1.0;
-  const velocity = Math.min(100, Math.max(1, Math.round(kRate * 30 + 30)));
-  const control = Math.min(100, Math.max(1, Math.round((1 - (ip > 0 ? bb / ip : 0.3)) * 90 + 10)));
-  const breaking = Math.min(100, Math.max(1, 50 + randomInt(-10, 10)));
+  const velocity = Math.min(100, Math.max(1, Math.round(kRate * 50 + 40)));
+  const control = Math.min(100, Math.max(1, Math.round((1 - (ip > 0 ? bb / ip : 0.3)) * 110)));
+  const breaking = Math.min(100, Math.max(1, 60 + randomInt(-15, 15)));
   const stamina = isStarter
     ? Math.min(100, Math.max(1, Math.round(ip * 0.5 + 30)))
     : Math.min(100, Math.max(1, randomInt(50, 65)));

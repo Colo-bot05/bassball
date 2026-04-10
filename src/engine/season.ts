@@ -1,6 +1,14 @@
 import type { Team } from '@/types/team';
-import type { MatchCard } from '@/types/game';
+import type { MatchCard, GameResult } from '@/types/game';
 import { shuffle } from '@/utils/random';
+
+/** 1ラウンド = 全12チームが同時に試合する6カード分 */
+export interface RoundCard {
+  cardNumber: number;
+  matchups: { homeTeamId: string; awayTeamId: string }[];
+  results: Map<string, GameResult[]>; // key = "homeId-vs-awayId"
+  isPlayed: boolean;
+}
 
 /**
  * シーズンの対戦カードを生成（143試合分）
@@ -68,6 +76,122 @@ export function generateSchedule(teams: Team[]): MatchCard[] {
   }
 
   return cards;
+}
+
+/**
+ * ラウンド制スケジュールを生成
+ * 1ラウンド = 6試合（12チーム全員参加）、3連戦1カード
+ * 同一リーグ 各ペア25試合 = 125試合, 交流戦 各ペア3試合 = 18試合
+ * 合計143試合 → 3試合1カード → 各チーム約48カード
+ * ラウンド数 ≒ 48
+ */
+export function generateRoundSchedule(teams: Team[]): RoundCard[] {
+  const central = teams.filter((t) => t.league === 'central');
+  const pacific = teams.filter((t) => t.league === 'pacific');
+
+  // 各ペアの3連戦カード数を積む
+  // 同一リーグ: 25試合 → 8カード(24試合) + 残り1試合は端数で追加
+  // 実際には25 = 8*3 + 1 なので8.33…→ 8カード+残1試合
+  // 簡略化: 各ペア25試合を3試合ずつにまとめ → 8カード(余り1試合は9枚目に)
+  // ただし全体のラウンド化のため、まずペア別カード一覧を作り、
+  // それをラウンドに配分する
+
+  interface SeriesCard {
+    homeTeamId: string;
+    awayTeamId: string;
+  }
+
+  const allSeriesCards: SeriesCard[] = [];
+
+  // 同一リーグ対戦カード
+  for (const leagueTeams of [central, pacific]) {
+    for (let i = 0; i < leagueTeams.length; i++) {
+      for (let j = i + 1; j < leagueTeams.length; j++) {
+        const teamA = leagueTeams[i].id;
+        const teamB = leagueTeams[j].id;
+        // 25試合 = 8.33カード → 13H+12A を3試合カードに分配
+        // 13試合ホーム → 4カード(12試合) + 1試合余り
+        // 12試合アウェイ → 4カード(12試合)
+        // → 合計8カード + 余り1試合
+        // 端数処理: 8カード + 最後の1カードに余り試合を含める(3試合にはならないが)
+        // 簡易: 9カード生成。最初の4はA home、次の4はB home、最後1はA home
+        for (let c = 0; c < 4; c++) {
+          allSeriesCards.push({ homeTeamId: teamA, awayTeamId: teamB });
+        }
+        for (let c = 0; c < 4; c++) {
+          allSeriesCards.push({ homeTeamId: teamB, awayTeamId: teamA });
+        }
+        // 残り1カード（25 - 8*3 = 1試合だが、カード単位で扱う）
+        allSeriesCards.push({ homeTeamId: teamA, awayTeamId: teamB });
+      }
+    }
+  }
+
+  // 交流戦カード: 各クロスペア3試合 = 1カード
+  for (const cTeam of central) {
+    for (const pTeam of pacific) {
+      const homeFirst = central.indexOf(cTeam) % 2 === 0;
+      if (homeFirst) {
+        allSeriesCards.push({ homeTeamId: cTeam.id, awayTeamId: pTeam.id });
+      } else {
+        allSeriesCards.push({ homeTeamId: pTeam.id, awayTeamId: cTeam.id });
+      }
+    }
+  }
+
+  // シャッフルしてからラウンドに配分
+  const shuffled = shuffle(allSeriesCards);
+
+  // ラウンドに配分: 各ラウンドは6カード（12チームが各1回登場）
+  const rounds: RoundCard[] = [];
+  const remaining = [...shuffled];
+  let cardNumber = 1;
+
+  while (remaining.length > 0) {
+    const round: SeriesCard[] = [];
+    const usedTeams = new Set<string>();
+
+    // 貪欲法で6カードを選ぶ
+    for (let idx = 0; idx < remaining.length && round.length < 6; ) {
+      const card = remaining[idx];
+      if (!usedTeams.has(card.homeTeamId) && !usedTeams.has(card.awayTeamId)) {
+        round.push(card);
+        usedTeams.add(card.homeTeamId);
+        usedTeams.add(card.awayTeamId);
+        remaining.splice(idx, 1);
+      } else {
+        idx++;
+      }
+    }
+
+    // 残りがあるが6カード揃わない場合もラウンドとして追加
+    if (round.length > 0) {
+      rounds.push({
+        cardNumber,
+        matchups: round.map((c) => ({
+          homeTeamId: c.homeTeamId,
+          awayTeamId: c.awayTeamId,
+        })),
+        results: new Map(),
+        isPlayed: false,
+      });
+      cardNumber++;
+    } else {
+      // 配分不可能なカードが残った場合、個別にラウンド化
+      for (const card of remaining) {
+        rounds.push({
+          cardNumber,
+          matchups: [{ homeTeamId: card.homeTeamId, awayTeamId: card.awayTeamId }],
+          results: new Map(),
+          isPlayed: false,
+        });
+        cardNumber++;
+      }
+      break;
+    }
+  }
+
+  return rounds;
 }
 
 /**
