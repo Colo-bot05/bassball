@@ -6,6 +6,9 @@ interface Props {
   team: Team;
   players: Player[];
   onBack: () => void;
+  onSwapLineup?: (index1: number, index2: number) => void;
+  onSwapRotation?: (index1: number, index2: number) => void;
+  onToggleFirstTeam?: (playerId: string) => void;
 }
 
 function statToRank(value: number): string {
@@ -39,7 +42,7 @@ function conditionLabel(condition: string): { text: string; color: string } {
 }
 
 /** 編成画面 */
-export function RosterScreen({ team, players, onBack }: Props) {
+export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotation, onToggleFirstTeam }: Props) {
   const [tab, setTab] = useState<'firstTeam' | 'farm' | 'rotation'>('firstTeam');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
 
@@ -118,11 +121,24 @@ export function RosterScreen({ team, players, onBack }: Props) {
             </div>
           )}
 
-          <div className="bg-gray-800 rounded-lg p-4">
+          <div className="bg-gray-800 rounded-lg p-4 mb-3">
             <h3 className="text-sm font-bold text-gray-400 mb-2">契約</h3>
             <p className="text-sm">年俸: {(p.contract.salary / 10000).toFixed(0)}億{p.contract.salary % 10000}万円</p>
             <p className="text-sm text-gray-400">プロ{p.yearsAsPro}年目 ・ {p.growthType === 'early' ? '早熟' : p.growthType === 'normal' ? '普通' : p.growthType === 'late' ? '晩成' : p.growthType === 'unstable' ? '不安定' : '晩年覚醒'}型</p>
           </div>
+
+          {onToggleFirstTeam && (
+            <button
+              onClick={() => { onToggleFirstTeam(p.id); setSelectedPlayer(null); }}
+              className={`w-full py-3 rounded-lg font-bold transition ${
+                p.isFirstTeam
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              {p.isFirstTeam ? '二軍に降格' : '一軍に昇格'}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -150,6 +166,59 @@ export function RosterScreen({ team, players, onBack }: Props) {
           ))}
         </div>
 
+        {/* 打順表示（一軍タブ時） */}
+        {tab === 'firstTeam' && team.lineup.order.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-xs text-gray-500 mb-2">打順</h3>
+            <div className="space-y-1">
+              {team.lineup.order.map((pid, idx) => {
+                const p = players.find((pl) => pl.id === pid);
+                if (!p) return null;
+                return (
+                  <div key={pid} className="flex items-center gap-2 bg-gray-800 rounded p-2">
+                    <span className="w-6 text-center text-xs text-yellow-400 font-bold">{idx + 1}</span>
+                    <span className="text-xs text-gray-500 w-6">{p.position}</span>
+                    <span className="flex-1 text-sm">{p.name}</span>
+                    {onSwapLineup && idx > 0 && (
+                      <button onClick={() => onSwapLineup(idx, idx - 1)} className="text-xs text-blue-400 px-1">↑</button>
+                    )}
+                    {onSwapLineup && idx < team.lineup.order.length - 1 && (
+                      <button onClick={() => onSwapLineup(idx, idx + 1)} className="text-xs text-blue-400 px-1">↓</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ローテーション表示（ローテタブ時） */}
+        {tab === 'rotation' && (
+          <div className="mb-4">
+            <h3 className="text-xs text-gray-500 mb-2">先発ローテーション</h3>
+            <div className="space-y-1">
+              {team.rotation.starters.map((pid, idx) => {
+                const p = players.find((pl) => pl.id === pid);
+                if (!p) return null;
+                return (
+                  <div key={pid} className="flex items-center gap-2 bg-gray-800 rounded p-2">
+                    <span className="w-6 text-center text-xs text-green-400 font-bold">{idx + 1}</span>
+                    <span className="flex-1 text-sm">{p.name}</span>
+                    <span className="text-xs text-gray-500">{p.pitcherStats ? `球${statToRank(p.pitcherStats.velocity)}制${statToRank(p.pitcherStats.control)}` : ''}</span>
+                    {onSwapRotation && idx > 0 && (
+                      <button onClick={() => onSwapRotation(idx, idx - 1)} className="text-xs text-blue-400 px-1">↑</button>
+                    )}
+                    {onSwapRotation && idx < team.rotation.starters.length - 1 && (
+                      <button onClick={() => onSwapRotation(idx, idx + 1)} className="text-xs text-blue-400 px-1">↓</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 選手一覧 */}
         <div className="space-y-1">
           {displayPlayers.map((p) => {
             const cond = conditionLabel(p.condition);

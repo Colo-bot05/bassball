@@ -4,7 +4,8 @@ import type { Player } from '@/types/player';
 import type { Team } from '@/types/team';
 import type { GameResult, GameEvent, GameState } from '@/types/game';
 import { createInitialTeams } from '@/data/initialTeams';
-import { generateSchedule, calculateStandings } from '@/engine/season';
+import { calculateStandings, generateRoundSchedule } from '@/engine/season';
+import type { RoundCard } from '@/engine/season';
 import { simulateGame } from '@/engine/simulation';
 import { updateCondition, checkSlump } from '@/engine/condition';
 import { checkInjury, healInjury, updateAwakeningGaugeFromInjury } from '@/engine/injury';
@@ -23,20 +24,14 @@ import { NotificationSystem } from '@/components/common/NotificationSystem';
 
 type Screen = 'title' | 'home' | 'game' | 'standings' | 'roster' | 'events' | 'settings' | 'scout' | 'management';
 
-interface GameCard {
-  homeTeamId: string;
-  awayTeamId: string;
-  cardNumber: number;
-  results: GameResult[];
-}
-
 interface AppState {
   screen: Screen;
   teams: Team[];
   players: Player[];
-  schedule: GameCard[];
+  schedule: RoundCard[];
   currentCard: number;
-  recentResults: GameResult[];
+  /** 最新ラウンドの全試合結果。外側配列=各マッチアップ、内側配列=3連戦 */
+  recentResults: GameResult[][];
   playerTeamId: string;
   gmName: string;
   year: number;
@@ -45,6 +40,47 @@ interface AppState {
   hasSaveData: boolean;
   postseasonResult: PostseasonResult | null;
   showPostseason: boolean;
+}
+
+/** MatchCard[]（セーブデータ）→ RoundCard[]（アプリ内）に復元 */
+function rebuildRoundsFromMatchCards(matchCards: { homeTeamId: string; awayTeamId: string; cardNumber: number; results: GameResult[]; isPlayed: boolean }[]): RoundCard[] {
+  const byCardNumber = new Map<number, typeof matchCards>();
+  for (const mc of matchCards) {
+    const arr = byCardNumber.get(mc.cardNumber) ?? [];
+    arr.push(mc);
+    byCardNumber.set(mc.cardNumber, arr);
+  }
+  const rounds: RoundCard[] = [];
+  const sortedKeys = [...byCardNumber.keys()].sort((a, b) => a - b);
+  for (const cn of sortedKeys) {
+    const cards = byCardNumber.get(cn)!;
+    const results = new Map<string, GameResult[]>();
+    let isPlayed = false;
+    for (const c of cards) {
+      if (c.results.length > 0) {
+        results.set(`${c.homeTeamId}-vs-${c.awayTeamId}`, c.results);
+        isPlayed = true;
+      }
+      if (c.isPlayed) isPlayed = true;
+    }
+    rounds.push({
+      cardNumber: cn,
+      matchups: cards.map((c) => ({ homeTeamId: c.homeTeamId, awayTeamId: c.awayTeamId })),
+      results,
+      isPlayed,
+    });
+  }
+  return rounds;
+}
+
+/** ラウンド結果からプレイヤーチームの試合結果を取得 */
+function getMyTeamResults(roundResults: GameResult[][], playerTeamId: string): GameResult[] {
+  for (const matchResults of roundResults) {
+    if (matchResults.length > 0 && (matchResults[0].homeTeamId === playerTeamId || matchResults[0].awayTeamId === playerTeamId)) {
+      return matchResults;
+    }
+  }
+  return [];
 }
 
 /** 個人成績をPlayerに書き戻す */
@@ -153,56 +189,68 @@ function processCardEffects(players: Player[], events: GameEvent[], year: number
   }
 }
 
-/** 1カード分をシミュレーション（純粋関数に近い形で処理） */
+/** 1ラウンド分をシミュレーション（全6マッチアップを同時進行） */
 function simulateOneCard(prev: AppState): AppState {
   if (prev.currentCard >= prev.schedule.length) return prev;
 
-  const card = prev.schedule[prev.currentCard];
-  const homeTeam = prev.teams.find((t) => t.id === card.homeTeamId);
-  const awayTeam = prev.teams.find((t) => t.id === card.awayTeamId);
-  if (!homeTeam || !awayTeam) return prev;
+  const round = prev.schedule[prev.currentCard];
+  const allMatchResults: GameResult[][] = [];
 
-  const useDH = homeTeam.league === 'pacific';
-  const results: GameResult[] = [];
+  for (const matchup of round.matchups) {
+    const homeTeam = prev.teams.find((t) => t.id === matchup.homeTeamId);
+    const awayTeam = prev.teams.find((t) => t.id === matchup.awayTeamId);
+    if (!homeTeam || !awayTeam) continue;
 
-  for (let g = 0; g < 3; g++) {
-    const result = simulateGame(homeTeam, awayTeam, prev.players, useDH);
-    results.push(result);
+    const useDH = homeTeam.league === 'pacific';
+    const matchResults: GameResult[] = [];
 
-    const homeScore = result.inningScores.reduce((s, inn) => s + inn.home, 0);
-    const awayScore = result.inningScores.reduce((s, inn) => s + inn.away, 0);
+    for (let g = 0; g < 3; g++) {
+      const result = simulateGame(homeTeam, awayTeam, prev.players, useDH);
+      matchResults.push(result);
 
-    if (homeScore > awayScore) {
-      homeTeam.record.wins++;
-      awayTeam.record.losses++;
-    } else if (awayScore > homeScore) {
-      awayTeam.record.wins++;
-      homeTeam.record.losses++;
-    } else {
-      homeTeam.record.draws++;
-      awayTeam.record.draws++;
+      const homeScore = result.inningScores.reduce((s, inn) => s + inn.home, 0);
+      const awayScore = result.inningScores.reduce((s, inn) => s + inn.away, 0);
+
+      if (homeScore > awayScore) {
+        homeTeam.record.wins++;
+        awayTeam.record.losses++;
+      } else if (awayScore > homeScore) {
+        awayTeam.record.wins++;
+        homeTeam.record.losses++;
+      } else {
+        homeTeam.record.draws++;
+        awayTeam.record.draws++;
+      }
+      homeTeam.record.runsScored += homeScore;
+      homeTeam.record.runsAllowed += awayScore;
+      awayTeam.record.runsScored += awayScore;
+      awayTeam.record.runsAllowed += homeScore;
     }
-    homeTeam.record.runsScored += homeScore;
-    homeTeam.record.runsAllowed += awayScore;
-    awayTeam.record.runsScored += awayScore;
-    awayTeam.record.runsAllowed += homeScore;
-  }
 
-  // 個人成績を蓄積
-  accumulatePlayerStats(prev.players, results);
+    // 個人成績を蓄積
+    accumulatePlayerStats(prev.players, matchResults);
+    allMatchResults.push(matchResults);
+  }
 
   // 調子・怪我・覚醒を更新
   const newEvents = [...prev.events];
   processCardEffects(prev.players, newEvents, prev.year, prev.currentCard + 1, prev.difficulty);
 
   const newSchedule = [...prev.schedule];
-  newSchedule[prev.currentCard] = { ...card, results };
+  const updatedResults = new Map(round.results);
+  for (const matchResults of allMatchResults) {
+    if (matchResults.length > 0) {
+      const key = `${matchResults[0].homeTeamId}-vs-${matchResults[0].awayTeamId}`;
+      updatedResults.set(key, matchResults);
+    }
+  }
+  newSchedule[prev.currentCard] = { ...round, results: updatedResults, isPlayed: true };
 
   return {
     ...prev,
     schedule: newSchedule,
     currentCard: prev.currentCard + 1,
-    recentResults: results,
+    recentResults: allMatchResults,
     events: newEvents.slice(-20),
   };
 }
@@ -212,9 +260,9 @@ function App() {
     screen: 'title',
     teams: [],
     players: [],
-    schedule: [],
+    schedule: [] as RoundCard[],
     currentCard: 0,
-    recentResults: [],
+    recentResults: [] as GameResult[][],
     playerTeamId: '',
     gmName: '',
     year: 2025,
@@ -243,13 +291,7 @@ function App() {
       const playerTeam = teams.find((t) => t.id === teamId);
       if (playerTeam) playerTeam.isPlayerControlled = true;
 
-      const rawSchedule = generateSchedule(teams);
-      const schedule: GameCard[] = rawSchedule.map((card) => ({
-        homeTeamId: card.homeTeamId,
-        awayTeamId: card.awayTeamId,
-        cardNumber: card.cardNumber,
-        results: [],
-      }));
+      const schedule = generateRoundSchedule(teams);
 
       setState({
         screen: 'home',
@@ -257,7 +299,7 @@ function App() {
         players,
         schedule,
         currentCard: 0,
-        recentResults: [],
+        recentResults: [] as GameResult[][],
         playerTeamId: teamId,
         gmName,
         year: 2025,
@@ -304,6 +346,25 @@ function App() {
     }));
   }, []);
 
+  /** RoundCard[] → MatchCard[] への変換（セーブ用） */
+  const flattenSchedule = useCallback((rounds: RoundCard[]) => {
+    const matchCards: { homeTeamId: string; awayTeamId: string; cardNumber: number; results: GameResult[]; isPlayed: boolean }[] = [];
+    for (const round of rounds) {
+      for (const matchup of round.matchups) {
+        const key = `${matchup.homeTeamId}-vs-${matchup.awayTeamId}`;
+        const results = round.results.get(key) ?? [];
+        matchCards.push({
+          homeTeamId: matchup.homeTeamId,
+          awayTeamId: matchup.awayTeamId,
+          cardNumber: round.cardNumber,
+          results,
+          isPlayed: round.isPlayed,
+        });
+      }
+    }
+    return matchCards;
+  }, []);
+
   /** GameStateを構築するヘルパー */
   const buildGameState = useCallback((): GameState => {
     return {
@@ -323,13 +384,10 @@ function App() {
       events: state.events,
       seasonRecords: [],
       hallOfFame: [],
-      schedule: state.schedule.map((c) => ({
-        ...c,
-        isPlayed: c.results.length > 0,
-      })),
+      schedule: flattenSchedule(state.schedule),
       currentCardIndex: state.currentCard,
     };
-  }, [state]);
+  }, [state, flattenSchedule]);
 
   /** CS・日本シリーズを実行 */
   const runPostseasonHandler = useCallback(() => {
@@ -355,7 +413,7 @@ function App() {
         showPostseason: true,
         events,
         screen: 'game' as Screen,
-        recentResults: result.japanSeriesResult.games.slice(-1),
+        recentResults: [result.japanSeriesResult.games.slice(-1)],
       };
     });
   }, []);
@@ -423,12 +481,7 @@ function App() {
       }
 
       // 新しいスケジュール生成
-      const newSchedule = generateSchedule(prev.teams).map((card) => ({
-        homeTeamId: card.homeTeamId,
-        awayTeamId: card.awayTeamId,
-        cardNumber: card.cardNumber,
-        results: [],
-      }));
+      const newSchedule = generateRoundSchedule(prev.teams);
 
       // チーム成績リセット
       const resetTeams = prev.teams.map((t) => ({
@@ -457,7 +510,7 @@ function App() {
         ...prev,
         year: prev.year + 1,
         currentCard: 0,
-        recentResults: [],
+        recentResults: [] as GameResult[][],
         schedule: newSchedule,
         teams: resetTeams,
         players: activePlayers,
@@ -490,14 +543,9 @@ function App() {
       screen: 'home',
       teams: gameState.teams,
       players: gameState.players,
-      schedule: gameState.schedule.map((c) => ({
-        homeTeamId: c.homeTeamId,
-        awayTeamId: c.awayTeamId,
-        cardNumber: c.cardNumber,
-        results: c.results,
-      })),
+      schedule: rebuildRoundsFromMatchCards(gameState.schedule),
       currentCard: gameState.currentCardIndex,
-      recentResults: [],
+      recentResults: [] as GameResult[][],
       playerTeamId: gameState.playerTeamId,
       gmName: gameState.gmName,
       year: gameState.currentDate.year,
@@ -530,14 +578,9 @@ function App() {
           screen: 'home',
           teams: gameState.teams,
           players: gameState.players,
-          schedule: gameState.schedule.map((c) => ({
-            homeTeamId: c.homeTeamId,
-            awayTeamId: c.awayTeamId,
-            cardNumber: c.cardNumber,
-            results: c.results,
-          })),
+          schedule: rebuildRoundsFromMatchCards(gameState.schedule),
           currentCard: gameState.currentCardIndex,
-          recentResults: [],
+          recentResults: [] as GameResult[][],
           playerTeamId: gameState.playerTeamId,
           gmName: gameState.gmName,
           year: gameState.currentDate.year,
@@ -602,9 +645,53 @@ function App() {
             </div>
 
             {state.recentResults.length > 0 ? (
-              state.recentResults.map((result, i) => (
-                <GameResultView key={i} result={result} teams={state.teams} />
-              ))
+              <>
+                {/* 自チームの3連戦を詳細表示 */}
+                {(() => {
+                  const myResults = getMyTeamResults(state.recentResults, state.playerTeamId);
+                  return myResults.length > 0 ? (
+                    <div className="mb-4">
+                      <h3 className="text-sm font-bold text-yellow-300 mb-2">自チーム試合結果</h3>
+                      {myResults.map((result, i) => (
+                        <GameResultView key={`my-${i}`} result={result} teams={state.teams} />
+                      ))}
+                    </div>
+                  ) : null;
+                })()}
+                {/* 他の試合をコンパクト表示 */}
+                <div>
+                  <h3 className="text-sm font-bold text-gray-400 mb-2">他球場の結果</h3>
+                  {state.recentResults
+                    .filter((matchResults) =>
+                      matchResults.length > 0 &&
+                      matchResults[0].homeTeamId !== state.playerTeamId &&
+                      matchResults[0].awayTeamId !== state.playerTeamId
+                    )
+                    .map((matchResults, mi) => {
+                      if (matchResults.length === 0) return null;
+                      const home = state.teams.find((t) => t.id === matchResults[0].homeTeamId);
+                      const away = state.teams.find((t) => t.id === matchResults[0].awayTeamId);
+                      const homeName = home?.shortName ?? matchResults[0].homeTeamId;
+                      const awayName = away?.shortName ?? matchResults[0].awayTeamId;
+                      return (
+                        <div key={`other-${mi}`} className="bg-gray-800 rounded px-3 py-2 mb-1 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-300 font-bold w-16 text-right">{homeName}</span>
+                            <span className="text-gray-500">vs</span>
+                            <span className="text-gray-300 font-bold w-16">{awayName}</span>
+                            <span className="text-gray-500 ml-auto">
+                              {matchResults.map((r) => {
+                                const hs = r.inningScores.reduce((s, inn) => s + inn.home, 0);
+                                const as_ = r.inningScores.reduce((s, inn) => s + inn.away, 0);
+                                return `${hs}-${as_}`;
+                              }).join(' / ')}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </>
             ) : (
               <p className="text-gray-500 text-center py-8">まだ試合結果がありません</p>
             )}
@@ -647,7 +734,39 @@ function App() {
 
     case 'roster':
       return playerTeam ? (
-        <RosterScreen team={playerTeam} players={state.players} onBack={() => navigate('home')} />
+        <RosterScreen
+          team={playerTeam}
+          players={state.players}
+          onBack={() => navigate('home')}
+          onSwapLineup={(i1, i2) => {
+            setState((prev) => {
+              const t = prev.teams.find((t) => t.id === prev.playerTeamId);
+              if (!t) return prev;
+              const order = [...t.lineup.order];
+              [order[i1], order[i2]] = [order[i2], order[i1]];
+              t.lineup.order = order;
+              return { ...prev };
+            });
+          }}
+          onSwapRotation={(i1, i2) => {
+            setState((prev) => {
+              const t = prev.teams.find((t) => t.id === prev.playerTeamId);
+              if (!t) return prev;
+              const starters = [...t.rotation.starters];
+              [starters[i1], starters[i2]] = [starters[i2], starters[i1]];
+              t.rotation.starters = starters;
+              return { ...prev };
+            });
+          }}
+          onToggleFirstTeam={(playerId) => {
+            setState((prev) => {
+              const player = prev.players.find((p) => p.id === playerId);
+              if (!player) return prev;
+              player.isFirstTeam = !player.isFirstTeam;
+              return { ...prev };
+            });
+          }}
+        />
       ) : null;
 
     case 'events':
