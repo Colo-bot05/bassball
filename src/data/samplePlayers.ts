@@ -263,6 +263,7 @@ function generatePitcherRow(
     inningsPitched,
     isForeign,
     role,
+    isDevelopment: isDev,
   };
 }
 
@@ -351,6 +352,7 @@ function generateBatterRow(
       obp: roundTo(obp * 0.88, 3),
       ops: roundTo(ops * 0.80, 3),
       isForeign,
+      isDevelopment: true,
     };
   }
 
@@ -369,6 +371,7 @@ function generateBatterRow(
     obp,
     ops,
     isForeign,
+    isDevelopment: false,
   };
 }
 
