@@ -13,6 +13,7 @@ interface Props {
   onAdvanceMonth: () => void;
   isSeasonOver: boolean;
   onProcessOffseason: () => void;
+  postseasonDone?: boolean;
 }
 
 /** 秘書のセリフを生成 */
@@ -43,6 +44,7 @@ export function HomeScreen({
   onAdvanceMonth,
   isSeasonOver,
   onProcessOffseason,
+  postseasonDone,
 }: Props) {
   const unreadCount = events.filter((e) => !e.isRead).length;
   const progress = totalCards > 0 ? Math.round((cardNumber / totalCards) * 100) : 0;
@@ -111,7 +113,7 @@ export function HomeScreen({
               onClick={onProcessOffseason}
               className="flex-1 bg-orange-600 hover:bg-orange-700 py-4 rounded-lg font-bold text-lg transition"
             >
-              オフシーズンへ
+              {postseasonDone ? 'オフシーズンへ' : 'CS・日本シリーズへ'}
             </button>
           )}
         </div>
