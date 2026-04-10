@@ -114,7 +114,7 @@ export function processOffseason(state: GameState): GameEvent[] {
     if (!eligibility.domestic && !eligibility.overseas) continue;
 
     const team = state.teams.find((t) => t.id === player.teamId);
-    if (!team || team.isPlayerControlled) continue; // プレイヤー球団の選手はスキップ
+    if (!team) continue;
 
     if (decideFADeclaration(player, team)) {
       faDeclaredPlayers.push(player);
@@ -143,7 +143,7 @@ export function processOffseason(state: GameState): GameEvent[] {
 
     const team = state.teams.find((t) => t.id === player.teamId);
     if (!team) continue;
-    if (team.isPlayerControlled) continue; // プレイヤー球団はUI操作
+    // プレイヤー球団もAI自動処理（将来UI操作に切り替え可能）
 
     const desiredSalary = calculateDesiredSalary(player);
     // AIは希望年俸の85-110%をオファー
@@ -236,8 +236,7 @@ export function processOffseason(state: GameState): GameEvent[] {
       const fromTeam = state.teams[i];
       const toTeam = state.teams[j];
 
-      // プレイヤー球団はAIトレードしない
-      if (fromTeam.isPlayerControlled || toTeam.isPlayerControlled) continue;
+      // プレイヤー球団もAI自動トレード
 
       const tradeResult = proposeAITrade(fromTeam, toTeam, state.players);
       if (!tradeResult) continue;
@@ -285,8 +284,6 @@ export function processOffseason(state: GameState): GameEvent[] {
   // ========================================
   // 外国人選手の帰国・新規獲得はここで処理
   for (const team of state.teams) {
-    if (team.isPlayerControlled) continue;
-
     // 帰国判定（外国人で成績が悪い場合）
     const foreignPlayers = state.players.filter(
       (p) => p.teamId === team.id && p.isForeign,

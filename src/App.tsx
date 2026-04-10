@@ -9,7 +9,7 @@ import type { RoundCard } from '@/engine/season';
 import { simulateGame } from '@/engine/simulation';
 import { updateCondition, checkSlump } from '@/engine/condition';
 import { checkInjury, healInjury, updateAwakeningGaugeFromInjury } from '@/engine/injury';
-import { applyYearlyGrowth, applyDecline, checkAwakening, checkRetirement } from '@/engine/growth';
+import { applyYearlyGrowth, applyDecline, checkAwakening } from '@/engine/growth';
 import { processOffseason as runOffseason } from '@/engine/offseason';
 import { autoSave, loadGame, listSaveSlots, exportSaveToJson, importSaveFromJson, saveGame } from '@/data/saveManager';
 import { runPostseason } from '@/engine/postseason';
@@ -22,7 +22,7 @@ import { StandingsView } from '@/components/game/StandingsView';
 import { RosterScreen } from '@/components/roster/RosterScreen';
 import { NotificationSystem } from '@/components/common/NotificationSystem';
 
-type Screen = 'title' | 'home' | 'game' | 'standings' | 'roster' | 'events' | 'settings' | 'scout' | 'management';
+type Screen = 'title' | 'home' | 'game' | 'standings' | 'roster' | 'events' | 'settings' | 'scout' | 'management' | 'offseasonSummary';
 
 interface AppState {
   screen: Screen;
@@ -421,13 +421,32 @@ function App() {
   /** オフシーズン処理（実際のエンジンを使用） */
   const processOffseason = useCallback(() => {
     setState((prev) => {
-      const gameState = buildGameState();
+      // prevから直接GameStateを構築（stale closure回避）
+      const gameState: GameState = {
+        version: '1.0.0',
+        savedAt: new Date().toISOString(),
+        seed: Date.now(),
+        currentDate: { year: prev.year, month: 4, cardNumber: prev.currentCard },
+        currentPhase: 'regularSeason',
+        offseasonStep: null,
+        playerTeamId: prev.playerTeamId,
+        gmName: prev.gmName,
+        difficulty: prev.difficulty,
+        teams: prev.teams,
+        players: prev.players,
+        reincarnationPool: [],
+        overseasPlayers: [],
+        events: prev.events,
+        seasonRecords: [],
+        hallOfFame: [],
+        schedule: flattenSchedule(prev.schedule),
+        currentCardIndex: prev.currentCard,
+      };
 
+      // 難易度補正付き成長（offseason.tsの前に実行）
       const diffMod = DIFFICULTY_MODIFIERS[prev.difficulty];
-
-      // 年間成長・衰えを適用（難易度補正付き）
-      for (const player of prev.players) {
-        const team = prev.teams.find((t) => t.playerIds.includes(player.id));
+      for (const player of gameState.players) {
+        const team = gameState.teams.find((t) => t.playerIds.includes(player.id));
         const isPlayerTeam = team?.id === prev.playerTeamId;
         const facilityBonus = team ? (team.facilities.training - 1) * 0.05 : 0;
         const dormBonus = team && player.age <= 25 ? (team.facilities.dormitory - 1) * 0.03 : 0;
@@ -436,91 +455,28 @@ function App() {
         applyDecline(player);
       }
 
-      // offseason.ts の統合処理を実行
+      // オフシーズン処理（gameStateを直接変更する。age++/成績リセット/チーム成績リセットも含む）
       const offseasonEvents = runOffseason(gameState);
 
-      // 引退判定
-      const retiredPlayers: Player[] = [];
-      for (const player of prev.players) {
-        if (checkRetirement(player)) {
-          retiredPlayers.push(player);
-        }
-      }
-
-      // 引退イベント
-      const retirementEvents: GameEvent[] = retiredPlayers.map((p) => ({
-        id: generateId(),
-        type: 'retirement' as const,
-        title: `${p.name}が引退`,
-        message: `${p.name}（${p.age}歳）が現役を引退しました。${p.yearsAsPro}年間お疲れ様でした。`,
-        date: { year: prev.year, month: 11, cardNumber: 0 },
-        playerId: p.id,
-        teamId: p.teamId,
-        isRead: false,
-      }));
-
-      // 引退選手を除外
-      const retiredIds = new Set(retiredPlayers.map((p) => p.id));
-      const activePlayers = prev.players.filter((p) => !retiredIds.has(p.id));
-
-      // 選手を加齢、成績リセット
-      for (const player of activePlayers) {
-        player.age++;
-        player.yearsAsPro++;
-        if (player.isFirstTeam) player.yearsInFirstTeam++;
-        player.currentBatterStats = {
-          games: 0, atBats: 0, hits: 0, doubles: 0, triples: 0, homeRuns: 0,
-          rbi: 0, runs: 0, stolenBases: 0, caughtStealing: 0, walks: 0,
-          strikeouts: 0, sacrificeBunts: 0, sacrificeFlies: 0, hitByPitch: 0,
-        };
-        player.currentPitcherStats = {
-          games: 0, gamesStarted: 0, wins: 0, losses: 0, saves: 0, holds: 0,
-          inningsPitched: 0, hitsAllowed: 0, homeRunsAllowed: 0, strikeouts: 0,
-          walks: 0, earnedRuns: 0,
-        };
-      }
-
-      // 新しいスケジュール生成
-      const newSchedule = generateRoundSchedule(prev.teams);
-
-      // チーム成績リセット
-      const resetTeams = prev.teams.map((t) => ({
-        ...t,
-        record: { wins: 0, losses: 0, draws: 0, runsScored: 0, runsAllowed: 0 },
-        playerIds: t.playerIds.filter((id) => !retiredIds.has(id)),
-      }));
-
-      const allEvents = [
-        ...prev.events,
-        ...offseasonEvents,
-        ...retirementEvents,
-        {
-          id: generateId(),
-          type: 'milestone' as const,
-          title: `${prev.year + 1}年シーズン開始`,
-          message: 'オフシーズンが終了し、新シーズンが始まります。',
-          date: { year: prev.year + 1, month: 2, cardNumber: 0 },
-          playerId: null,
-          teamId: null,
-          isRead: false,
-        },
-      ].slice(-20);
+      // offseason.tsが年齢加算・成績リセット・チーム成績リセットを実施済み
+      // 新しいスケジュール生成（変更済みteamsを使用）
+      const newSchedule = generateRoundSchedule(gameState.teams);
 
       return {
         ...prev,
-        year: prev.year + 1,
+        year: gameState.currentDate.year,
         currentCard: 0,
         recentResults: [] as GameResult[][],
         schedule: newSchedule,
-        teams: resetTeams,
-        players: activePlayers,
-        screen: 'home',
-        events: allEvents,
+        teams: gameState.teams,
+        players: gameState.players,
+        screen: 'offseasonSummary' as Screen,
+        events: [...prev.events, ...offseasonEvents].slice(-50),
         postseasonResult: null,
         showPostseason: false,
       };
     });
-  }, [buildGameState]);
+  }, []);
 
   /** セーブ */
   const handleSave = useCallback(async (slot: number) => {
@@ -833,6 +789,64 @@ function App() {
           </div>
         </div>
       );
+
+    case 'offseasonSummary': {
+      const awards = state.events.filter((e) => e.type === 'milestone' && e.title.includes('MVP') || e.title.includes('最多') || e.title.includes('首位'));
+      const faEvents = state.events.filter((e) => e.type === 'faDeclaration');
+      const tradeEvents = state.events.filter((e) => e.title.includes('トレード'));
+      const retireEvents = state.events.filter((e) => e.type === 'retirement');
+      const otherEvents = state.events.filter((e) => !awards.includes(e) && !faEvents.includes(e) && !tradeEvents.includes(e) && !retireEvents.includes(e) && !e.isRead);
+
+      return (
+        <div className="min-h-screen bg-gray-900 text-white p-4">
+          <div className="max-w-lg mx-auto">
+            <h2 className="text-2xl font-bold text-center mb-6">{state.year}年 オフシーズン</h2>
+
+            {awards.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-3">
+                <h3 className="text-sm font-bold text-yellow-400 mb-2">表彰</h3>
+                {awards.map((e) => <p key={e.id} className="text-sm text-gray-300">{e.message}</p>)}
+              </div>
+            )}
+
+            {faEvents.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-3">
+                <h3 className="text-sm font-bold text-blue-400 mb-2">FA移籍</h3>
+                {faEvents.map((e) => <p key={e.id} className="text-sm text-gray-300">{e.message}</p>)}
+              </div>
+            )}
+
+            {tradeEvents.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-3">
+                <h3 className="text-sm font-bold text-green-400 mb-2">トレード</h3>
+                {tradeEvents.map((e) => <p key={e.id} className="text-sm text-gray-300">{e.message}</p>)}
+              </div>
+            )}
+
+            {retireEvents.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-3">
+                <h3 className="text-sm font-bold text-gray-400 mb-2">引退</h3>
+                {retireEvents.map((e) => <p key={e.id} className="text-sm text-gray-300">{e.message}</p>)}
+              </div>
+            )}
+
+            {otherEvents.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-3">
+                <h3 className="text-sm font-bold text-gray-400 mb-2">その他</h3>
+                {otherEvents.slice(0, 10).map((e) => <p key={e.id} className="text-sm text-gray-300">{e.title}: {e.message}</p>)}
+              </div>
+            )}
+
+            <button
+              onClick={() => navigate('home')}
+              className="w-full bg-green-600 hover:bg-green-700 py-4 rounded-lg font-bold text-lg transition mt-4"
+            >
+              {state.year}年シーズンへ
+            </button>
+          </div>
+        </div>
+      );
+    }
 
     case 'settings':
       return (
