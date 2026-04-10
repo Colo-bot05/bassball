@@ -21,6 +21,7 @@ import { GameResultView } from '@/components/game/GameResultView';
 import { StandingsView } from '@/components/game/StandingsView';
 import { RosterScreen } from '@/components/roster/RosterScreen';
 import { NotificationSystem } from '@/components/common/NotificationSystem';
+import { RankingsView } from '@/components/game/RankingsView';
 
 type Screen = 'title' | 'home' | 'game' | 'standings' | 'roster' | 'events' | 'settings' | 'scout' | 'management' | 'offseasonSummary';
 
@@ -256,6 +257,8 @@ function simulateOneCard(prev: AppState): AppState {
 }
 
 function App() {
+  const [standingsTab, setStandingsTab] = useState<'team' | 'individual'>('team');
+
   const [state, setState] = useState<AppState>({
     screen: 'title',
     teams: [],
@@ -575,6 +578,7 @@ function App() {
       return playerTeam ? (
         <HomeScreen
           team={playerTeam}
+          players={state.players}
           gmName={state.gmName}
           year={state.year}
           cardNumber={state.currentCard}
@@ -680,10 +684,32 @@ function App() {
               <h2 className="text-xl font-bold">順位表</h2>
               <button onClick={() => navigate('home')} className="text-gray-400 text-sm">戻る</button>
             </div>
-            <div className="space-y-4">
-              <StandingsView title="セ・リーグ" standings={calculateStandings(state.teams, 'central')} playerTeamId={state.playerTeamId} />
-              <StandingsView title="パ・リーグ" standings={calculateStandings(state.teams, 'pacific')} playerTeamId={state.playerTeamId} />
+            <div className="flex gap-1 mb-4">
+              <button
+                onClick={() => setStandingsTab('team')}
+                className={`flex-1 py-2 rounded text-sm font-medium transition ${
+                  standingsTab === 'team' ? 'bg-blue-600' : 'bg-gray-800 text-gray-400'
+                }`}
+              >
+                チーム順位
+              </button>
+              <button
+                onClick={() => setStandingsTab('individual')}
+                className={`flex-1 py-2 rounded text-sm font-medium transition ${
+                  standingsTab === 'individual' ? 'bg-blue-600' : 'bg-gray-800 text-gray-400'
+                }`}
+              >
+                個人成績
+              </button>
             </div>
+            {standingsTab === 'team' ? (
+              <div className="space-y-4">
+                <StandingsView title="セ・リーグ" standings={calculateStandings(state.teams, 'central')} playerTeamId={state.playerTeamId} />
+                <StandingsView title="パ・リーグ" standings={calculateStandings(state.teams, 'pacific')} playerTeamId={state.playerTeamId} />
+              </div>
+            ) : (
+              <RankingsView players={state.players} teams={state.teams} playerTeamId={state.playerTeamId} />
+            )}
           </div>
         </div>
       );
@@ -719,6 +745,26 @@ function App() {
               const player = prev.players.find((p) => p.id === playerId);
               if (!player) return prev;
               player.isFirstTeam = !player.isFirstTeam;
+              return { ...prev };
+            });
+          }}
+          onReplaceLineup={(index, newPlayerId) => {
+            setState((prev) => {
+              const t = prev.teams.find((t) => t.id === prev.playerTeamId);
+              if (!t) return prev;
+              const order = [...t.lineup.order];
+              order[index] = newPlayerId;
+              t.lineup.order = order;
+              return { ...prev };
+            });
+          }}
+          onReplaceRotation={(index, newPlayerId) => {
+            setState((prev) => {
+              const t = prev.teams.find((t) => t.id === prev.playerTeamId);
+              if (!t) return prev;
+              const starters = [...t.rotation.starters];
+              starters[index] = newPlayerId;
+              t.rotation.starters = starters;
               return { ...prev };
             });
           }}
