@@ -9,6 +9,8 @@ interface Props {
   onSwapLineup?: (index1: number, index2: number) => void;
   onSwapRotation?: (index1: number, index2: number) => void;
   onToggleFirstTeam?: (playerId: string) => void;
+  onReplaceLineup?: (index: number, newPlayerId: string) => void;
+  onReplaceRotation?: (index: number, newPlayerId: string) => void;
 }
 
 function statToRank(value: number): string {
@@ -42,9 +44,21 @@ function conditionLabel(condition: string): { text: string; color: string } {
 }
 
 /** 編成画面 */
-export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotation, onToggleFirstTeam }: Props) {
+export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotation, onToggleFirstTeam, onReplaceLineup, onReplaceRotation }: Props) {
   const [tab, setTab] = useState<'firstTeam' | 'farm' | 'rotation'>('firstTeam');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
+
+  // Drag & drop state for lineup
+  const [lineupDragIdx, setLineupDragIdx] = useState<number | null>(null);
+  const [lineupDragOverIdx, setLineupDragOverIdx] = useState<number | null>(null);
+
+  // Drag & drop state for rotation
+  const [rotationDragIdx, setRotationDragIdx] = useState<number | null>(null);
+  const [rotationDragOverIdx, setRotationDragOverIdx] = useState<number | null>(null);
+
+  // Swap modal state
+  const [lineupSwapIdx, setLineupSwapIdx] = useState<number | null>(null);
+  const [rotationSwapIdx, setRotationSwapIdx] = useState<number | null>(null);
 
   const teamPlayers = players.filter((p) => team.playerIds.includes(p.id));
   const firstTeam = teamPlayers.filter((p) => p.isFirstTeam);
@@ -53,6 +67,27 @@ export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotati
   const displayPlayers = tab === 'firstTeam' ? firstTeam
     : tab === 'farm' ? farm
     : firstTeam.filter((p) => p.position === 'P');
+
+  // Bench fielders: first-team, not in lineup, not pitcher, not injured
+  const benchFielders = teamPlayers.filter(
+    (p) =>
+      team.playerIds.includes(p.id) &&
+      p.isFirstTeam &&
+      !team.lineup.order.includes(p.id) &&
+      p.position !== 'P' &&
+      !p.injury.isInjured
+  );
+
+  // Bench pitchers: first-team, pitcher, starter role, not in rotation, not injured
+  const benchPitchers = teamPlayers.filter(
+    (p) =>
+      team.playerIds.includes(p.id) &&
+      p.isFirstTeam &&
+      p.position === 'P' &&
+      p.pitcherRole === 'starter' &&
+      !team.rotation.starters.includes(p.id) &&
+      !p.injury.isInjured
+  );
 
   if (selectedPlayer) {
     const p = selectedPlayer;
@@ -175,19 +210,74 @@ export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotati
                 const p = players.find((pl) => pl.id === pid);
                 if (!p) return null;
                 return (
-                  <div key={pid} className="flex items-center gap-2 bg-gray-800 rounded p-2">
+                  <div
+                    key={pid}
+                    draggable
+                    onDragStart={() => setLineupDragIdx(idx)}
+                    onDragOver={(e) => { e.preventDefault(); setLineupDragOverIdx(idx); }}
+                    onDragLeave={() => setLineupDragOverIdx(null)}
+                    onDrop={() => {
+                      if (lineupDragIdx !== null && lineupDragIdx !== idx && onSwapLineup) {
+                        onSwapLineup(lineupDragIdx, idx);
+                      }
+                      setLineupDragIdx(null);
+                      setLineupDragOverIdx(null);
+                    }}
+                    onDragEnd={() => { setLineupDragIdx(null); setLineupDragOverIdx(null); }}
+                    className={`flex items-center gap-2 bg-gray-800 rounded p-2 cursor-grab transition ${
+                      lineupDragIdx === idx ? 'opacity-40' : ''
+                    } ${lineupDragOverIdx === idx && lineupDragIdx !== idx ? 'ring-2 ring-blue-400' : ''}`}
+                  >
+                    <span className="text-gray-500 select-none cursor-grab">⠿</span>
                     <span className="w-6 text-center text-xs text-yellow-400 font-bold">{idx + 1}</span>
                     <span className="text-xs text-gray-500 w-6">{p.position}</span>
                     <span className="flex-1 text-sm">{p.name}</span>
-                    {onSwapLineup && idx > 0 && (
-                      <button onClick={() => onSwapLineup(idx, idx - 1)} className="text-xs text-blue-400 px-1">↑</button>
-                    )}
-                    {onSwapLineup && idx < team.lineup.order.length - 1 && (
-                      <button onClick={() => onSwapLineup(idx, idx + 1)} className="text-xs text-blue-400 px-1">↓</button>
+                    {onReplaceLineup && (
+                      <button
+                        onClick={() => setLineupSwapIdx(idx)}
+                        className="text-xs text-orange-400 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition"
+                      >
+                        交代
+                      </button>
                     )}
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Lineup swap modal */}
+        {lineupSwapIdx !== null && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-lg p-4 w-full max-w-sm max-h-[70vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold">交代選手を選択</h3>
+                <button onClick={() => setLineupSwapIdx(null)} className="text-gray-400 text-xs hover:text-white">閉じる</button>
+              </div>
+              {benchFielders.length === 0 ? (
+                <p className="text-gray-500 text-sm text-center py-4">交代可能な選手がいません</p>
+              ) : (
+                <div className="space-y-1">
+                  {benchFielders.map((p) => {
+                    const cond = conditionLabel(p.condition);
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          if (onReplaceLineup) onReplaceLineup(lineupSwapIdx, p.id);
+                          setLineupSwapIdx(null);
+                        }}
+                        className="w-full bg-gray-700 hover:bg-gray-600 rounded p-2 text-left flex items-center gap-2 transition"
+                      >
+                        <span className="text-xs text-gray-500 w-6">{p.position}</span>
+                        <span className="flex-1 text-sm">{p.name}</span>
+                        <span className={`text-xs ${cond.color}`}>{cond.text}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -201,19 +291,74 @@ export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotati
                 const p = players.find((pl) => pl.id === pid);
                 if (!p) return null;
                 return (
-                  <div key={pid} className="flex items-center gap-2 bg-gray-800 rounded p-2">
+                  <div
+                    key={pid}
+                    draggable
+                    onDragStart={() => setRotationDragIdx(idx)}
+                    onDragOver={(e) => { e.preventDefault(); setRotationDragOverIdx(idx); }}
+                    onDragLeave={() => setRotationDragOverIdx(null)}
+                    onDrop={() => {
+                      if (rotationDragIdx !== null && rotationDragIdx !== idx && onSwapRotation) {
+                        onSwapRotation(rotationDragIdx, idx);
+                      }
+                      setRotationDragIdx(null);
+                      setRotationDragOverIdx(null);
+                    }}
+                    onDragEnd={() => { setRotationDragIdx(null); setRotationDragOverIdx(null); }}
+                    className={`flex items-center gap-2 bg-gray-800 rounded p-2 cursor-grab transition ${
+                      rotationDragIdx === idx ? 'opacity-40' : ''
+                    } ${rotationDragOverIdx === idx && rotationDragIdx !== idx ? 'ring-2 ring-green-400' : ''}`}
+                  >
+                    <span className="text-gray-500 select-none cursor-grab">⠿</span>
                     <span className="w-6 text-center text-xs text-green-400 font-bold">{idx + 1}</span>
                     <span className="flex-1 text-sm">{p.name}</span>
                     <span className="text-xs text-gray-500">{p.pitcherStats ? `球${statToRank(p.pitcherStats.velocity)}制${statToRank(p.pitcherStats.control)}` : ''}</span>
-                    {onSwapRotation && idx > 0 && (
-                      <button onClick={() => onSwapRotation(idx, idx - 1)} className="text-xs text-blue-400 px-1">↑</button>
-                    )}
-                    {onSwapRotation && idx < team.rotation.starters.length - 1 && (
-                      <button onClick={() => onSwapRotation(idx, idx + 1)} className="text-xs text-blue-400 px-1">↓</button>
+                    {onReplaceRotation && (
+                      <button
+                        onClick={() => setRotationSwapIdx(idx)}
+                        className="text-xs text-orange-400 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition"
+                      >
+                        交代
+                      </button>
                     )}
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Rotation swap modal */}
+        {rotationSwapIdx !== null && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-lg p-4 w-full max-w-sm max-h-[70vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold">交代投手を選択</h3>
+                <button onClick={() => setRotationSwapIdx(null)} className="text-gray-400 text-xs hover:text-white">閉じる</button>
+              </div>
+              {benchPitchers.length === 0 ? (
+                <p className="text-gray-500 text-sm text-center py-4">交代可能な投手がいません</p>
+              ) : (
+                <div className="space-y-1">
+                  {benchPitchers.map((p) => {
+                    const cond = conditionLabel(p.condition);
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          if (onReplaceRotation) onReplaceRotation(rotationSwapIdx, p.id);
+                          setRotationSwapIdx(null);
+                        }}
+                        className="w-full bg-gray-700 hover:bg-gray-600 rounded p-2 text-left flex items-center gap-2 transition"
+                      >
+                        <span className="flex-1 text-sm">{p.name}</span>
+                        <span className="text-xs text-gray-500">{p.pitcherStats ? `球${statToRank(p.pitcherStats.velocity)}制${statToRank(p.pitcherStats.control)}` : ''}</span>
+                        <span className={`text-xs ${cond.color}`}>{cond.text}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -1,8 +1,10 @@
 import type { Team } from '@/types/team';
+import type { Player } from '@/types/player';
 import type { GameEvent } from '@/types/game';
 
 interface Props {
   team: Team;
+  players: Player[];
   gmName: string;
   year: number;
   cardNumber: number;
@@ -17,23 +19,85 @@ interface Props {
 }
 
 /** 秘書のセリフを生成 */
-function getSecretaryMessage(team: Team, isSeasonOver: boolean): string {
-  if (isSeasonOver) return 'シーズンが終了しました。オフシーズンの処理を行いましょう。';
+function getSecretaryMessage(team: Team, players: Player[], cardNumber: number, totalCards: number): string {
+  if (cardNumber >= totalCards && totalCards > 0) {
+    return 'シーズンが終了しました。オフシーズンの処理を行いましょう。';
+  }
 
+  const teamPlayers = players.filter((p) => team.playerIds.includes(p.id));
+  const firstTeamPlayers = teamPlayers.filter((p) => p.isFirstTeam);
+
+  const messages: string[] = [];
+
+  // Injury count warning
+  const injuredCount = firstTeamPlayers.filter((p) => p.injury.isInjured).length;
+  if (injuredCount >= 3) {
+    messages.push(`一軍に${injuredCount}人の怪我人がいます。編成の見直しが必要かもしれません。`);
+  } else if (injuredCount > 0) {
+    messages.push(`怪我人が${injuredCount}人います。早期復帰を祈りましょう。`);
+  }
+
+  // Hot players
+  const hotPlayers = firstTeamPlayers.filter((p) => p.condition === 'excellent');
+  if (hotPlayers.length > 0) {
+    const name = hotPlayers[Math.floor(Math.random() * hotPlayers.length)].name;
+    messages.push(`${name}が絶好調です！この勢いに期待しましょう！`);
+  }
+
+  // Cold players
+  const coldPlayers = firstTeamPlayers.filter((p) => p.condition === 'terrible');
+  if (coldPlayers.length > 0) {
+    const name = coldPlayers[Math.floor(Math.random() * coldPlayers.length)].name;
+    messages.push(`${name}が絶不調です...調子が戻るまで辛抱が必要ですね。`);
+  }
+
+  // Win streak detection
   const record = team.record;
   const totalGames = record.wins + record.losses;
-  if (totalGames === 0) return 'いよいよシーズン開幕です！頑張りましょう！';
+  if (totalGames > 0) {
+    const winRate = record.wins / totalGames;
+    if (winRate >= 0.65) {
+      messages.push('チームは絶好調ですね！このまま優勝を目指しましょう！');
+    } else if (winRate < 0.35) {
+      messages.push('厳しい状況ですが、若手の成長に期待しましょう。');
+    }
+  }
 
-  const winRate = record.wins / totalGames;
-  if (winRate >= 0.6) return 'チームは絶好調ですね！このまま優勝を目指しましょう！';
-  if (winRate >= 0.5) return '順調に勝ち星を重ねています。もう一段ギアを上げましょう！';
-  if (winRate >= 0.4) return '少し苦しい展開ですが、まだまだ巻き返せます！';
-  return '厳しい状況ですが、若手の成長に期待しましょう。';
+  // Season progress reminders
+  if (totalCards > 0) {
+    const progress = cardNumber / totalCards;
+    if (progress < 0.05) {
+      messages.push('いよいよシーズン開幕です！頑張りましょう！');
+    } else if (progress >= 0.45 && progress < 0.55) {
+      messages.push('シーズンも折り返しです。後半戦に向けて戦力を整えましょう！');
+    } else if (progress >= 0.85) {
+      messages.push('シーズン終盤です。最後まで気を抜かずに行きましょう！');
+    }
+  }
+
+  // Fallback messages
+  if (messages.length === 0) {
+    const record = team.record;
+    const totalGames = record.wins + record.losses;
+    if (totalGames === 0) {
+      messages.push('いよいよシーズン開幕です！頑張りましょう！');
+    } else {
+      const winRate = record.wins / totalGames;
+      if (winRate >= 0.6) messages.push('順調に勝ち星を重ねています。もう一段ギアを上げましょう！');
+      else if (winRate >= 0.5) messages.push('五分の戦いを続けています。ここから抜け出しましょう！');
+      else if (winRate >= 0.4) messages.push('少し苦しい展開ですが、まだまだ巻き返せます！');
+      else messages.push('厳しい状況ですが、若手の成長に期待しましょう。');
+    }
+  }
+
+  // Pick randomly from applicable messages
+  return messages[Math.floor(Math.random() * messages.length)];
 }
 
 /** ホーム画面 */
 export function HomeScreen({
   team,
+  players,
   gmName,
   year,
   cardNumber,
@@ -76,7 +140,7 @@ export function HomeScreen({
       <main className="p-4 max-w-lg mx-auto">
         {/* 秘書メッセージ */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <p className="text-sm text-gray-300">{getSecretaryMessage(team, isSeasonOver)}</p>
+          <p className="text-sm text-gray-300">{getSecretaryMessage(team, players, cardNumber, totalCards)}</p>
         </div>
 
         {/* 通知バッジ */}
