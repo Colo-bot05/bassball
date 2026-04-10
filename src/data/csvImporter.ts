@@ -43,6 +43,7 @@ export interface CsvPlayerRow {
   // 追加
   isForeign?: boolean;
   role?: string;
+  isDevelopment?: boolean;
 }
 
 const PITCH_TYPES: PitchType[] = [
@@ -314,8 +315,8 @@ export function csvRowToPlayer(row: CsvPlayerRow): Player {
     slump: { isInSlump: false, remainingCards: 0 },
     injury: { isInjured: false, name: '', severity: 'minor', remainingCards: 0, hadTommyJohn: false },
     contract: { salary: row.salary, remainingYears: 0, promise: null, promiseKept: null },
-    isFirstTeam: true,
-    isDevelopment: false,
+    isFirstTeam: !(row.isDevelopment ?? false),
+    isDevelopment: row.isDevelopment ?? false,
     isForeign: row.isForeign ?? false,
     isTwoWay: false,
     isLegend: false,
