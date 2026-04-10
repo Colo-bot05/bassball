@@ -1,29 +1,400 @@
 /**
- * テスト用のサンプル選手データCSV
- * 各球団から数名ずつの代表選手
+ * 全12球団の選手データを動的に生成する
+ * 各チーム約65名、合計約780名
+ * 仕様書 M-7 に基づくステータス範囲
  */
-export const SAMPLE_CSV = `name,teamId,position,age,throwHand,batHand,salary,battingAvg,homeRuns,rbi,stolenBases,obp,ops,era,wins,saves,strikeouts,walks,inningsPitched,isForeign,role
-坂本勇人,giants,SS,37,right,right,60000,0.252,8,42,2,0.320,0.710,,,,,,,false,
-丸佳浩,giants,CF,36,right,left,45000,0.265,15,55,3,0.370,0.800,,,,,,,false,
-岡本和真,giants,3B,28,right,right,50000,0.280,30,85,2,0.370,0.900,,,,,,,false,
-戸郷翔征,giants,P,24,right,right,15000,,,,,,0,2.50,12,,170,40,180,false,starter
-大勢,giants,P,26,right,right,10000,,,,,,0,2.00,2,35,70,20,65,false,closer
-佐藤輝明,tigers,3B,26,right,left,15000,0.255,25,70,5,0.330,0.800,,,,,,,false,
-近本光司,tigers,CF,30,right,left,25000,0.290,5,40,30,0.350,0.750,,,,,,,false,
-才木浩人,tigers,P,26,right,right,8000,,,,,,0,2.20,10,,155,35,170,false,starter
-村上宗隆,swallows,3B,26,right,left,60000,0.270,35,95,3,0.400,0.950,,,,,,,false,
-牧秀悟,baystars,2B,26,right,right,15000,0.280,25,80,5,0.350,0.850,,,,,,,false,
-東克樹,baystars,P,28,left,left,12000,,,,,,0,2.30,11,,145,30,175,false,starter
-山本由伸,buffaloes,P,26,right,right,65000,,,,,,0,1.80,15,,200,30,190,false,starter
-宮城大弥,buffaloes,P,23,left,left,8000,,,,,,0,2.60,10,,130,35,160,false,starter
-柳田悠岐,hawks,LF,36,right,left,62000,0.260,20,65,5,0.380,0.850,,,,,,,false,
-山川穂高,hawks,1B,33,right,right,30000,0.270,30,80,1,0.350,0.870,,,,,,,false,
-千賀滉大,hawks,P,32,right,right,80000,,,,,,0,2.40,12,,180,40,170,false,starter
-佐々木朗希,marines,P,23,right,right,15000,,,,,,0,1.70,10,,190,30,150,false,starter
-吉田正尚,eagles,LF,31,right,left,30000,0.310,20,70,3,0.400,0.900,,,,,,,false,
-松井裕樹,eagles,P,29,left,left,25000,,,,,,0,1.50,2,40,80,20,60,false,closer
-源田壮亮,lions,SS,31,right,left,20000,0.260,3,30,15,0.310,0.660,,,,,,,false,
-万波中正,fighters,RF,25,right,right,3000,0.240,20,55,8,0.300,0.750,,,,,,,false,
-鈴木誠也,carp,RF,31,right,right,35000,0.295,25,75,10,0.380,0.900,,,,,,,false,
-高橋宏斗,dragons,P,22,right,right,5000,,,,,,0,2.80,8,,140,40,150,false,starter
-`;
+import type { CsvPlayerRow } from '@/data/csvImporter';
+
+// ---------------------------------------------------------------------------
+// 日本語名ジェネレーター
+// ---------------------------------------------------------------------------
+const SURNAMES = [
+  '佐藤', '田中', '鈴木', '高橋', '渡辺', '伊藤', '山本', '中村', '小林', '加藤',
+  '吉田', '山田', '松本', '井上', '木村', '林', '斎藤', '清水', '山口', '松田',
+  '阿部', '森', '池田', '橋本', '石川', '前田', '藤田', '小川', '岡田', '後藤',
+  '村田', '長谷川', '近藤', '石井', '斉藤', '坂本', '遠藤', '青木', '藤井', '西村',
+  '福田', '太田', '三浦', '藤原', '岡本', '松井', '中島', '金子', '原', '中野',
+  '河野', '菅原', '上田', '野村', '大塚', '千葉', '久保', '安藤', '丸山', '北村',
+  '宮崎', '工藤', '内田', '高木', '平野', '杉山', '今村', '大野', '武田', '菊池',
+  '和田', '土屋', '西田', '永田', '島田', '望月', '堀', '柳', '奥村', '岩田',
+  '片岡', '黒田', '柳田', '吉川', '秋山', '浅野', '関', '新井', '谷口', '大谷',
+  '中田', '星野', '松尾', '横山', '宮本', '小野', '田村', '戸田', '古田', '荒木',
+  '栗原', '牧', '有原', '今井', '大山', '佐野', '村上', '塩見', '梅野', '外崎',
+  '源田', '甲斐', '柳町', '髙濱', '紅林', '万波', '細川', '野口', '笠原', '石橋',
+];
+
+const FIRST_NAMES = [
+  '翔太', '大輝', '健太', '拓也', '直人', '翔平', '雄太', '和也', '大地', '悠真',
+  '蓮', '颯太', '陽斗', '悠斗', '奏太', '隼人', '駿', '涼太', '一輝', '海斗',
+  '遼太', '康平', '将太', '龍之介', '裕太', '剛', '誠', '大樹', '圭吾', '慎太郎',
+  '亮太', '勇人', '光', '恵太', '正志', '達也', '智也', '優太', '宏斗', '浩人',
+  '洸太', '大夢', '凌', '瑛太', '壮亮', '輝明', '宗隆', '正尚', '朗希', '由伸',
+  '大弥', '克樹', '浩大', '秀悟', '勇気', '柊', '陸', '匠', '奏', '樹',
+];
+
+/**
+ * シード不要の簡易名前ジェネレーター
+ * 同一チーム内での重複を避けるためSetで管理
+ */
+function createNameGenerator() {
+  const used = new Set<string>();
+
+  return function generateName(): string {
+    // 最大100回試行して重複を回避
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const surname = SURNAMES[Math.floor(Math.random() * SURNAMES.length)];
+      const firstName = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
+      const name = surname + firstName;
+      if (!used.has(name)) {
+        used.add(name);
+        return name;
+      }
+    }
+    // フォールバック: 番号付き
+    const fallback = `選手${used.size + 1}`;
+    used.add(fallback);
+    return fallback;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ユーティリティ
+// ---------------------------------------------------------------------------
+function randFloat(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+function randInt(min: number, max: number): number {
+  return Math.floor(randFloat(min, max + 1));
+}
+
+function roundTo(n: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(n * f) / f;
+}
+
+// ---------------------------------------------------------------------------
+// 定数
+// ---------------------------------------------------------------------------
+const TEAM_IDS = [
+  'giants', 'tigers', 'carp', 'dragons', 'baystars', 'swallows',
+  'hawks', 'buffaloes', 'marines', 'eagles', 'lions', 'fighters',
+] as const;
+
+type FieldPosition = 'C' | '1B' | '2B' | '3B' | 'SS' | 'LF' | 'CF' | 'RF';
+type PitcherRoleType = 'starter' | 'reliever' | 'setup' | 'closer';
+
+interface SlotDef {
+  position: string;
+  role?: PitcherRoleType;
+  isDevelopment?: boolean;
+  tier: 'star' | 'regular' | 'bench' | 'dev';
+}
+
+/** チームごとのスロット定義を組み立てる */
+function buildTeamSlots(): SlotDef[] {
+  const slots: SlotDef[] = [];
+
+  // --- 1軍投手 15名 ---
+  // 先発6
+  for (let i = 0; i < 6; i++) {
+    slots.push({ position: 'P', role: 'starter', tier: i < 2 ? 'star' : 'regular' });
+  }
+  // 中継ぎ6
+  for (let i = 0; i < 6; i++) {
+    slots.push({ position: 'P', role: 'reliever', tier: i < 1 ? 'star' : 'regular' });
+  }
+  // セットアップ2
+  slots.push({ position: 'P', role: 'setup', tier: 'star' });
+  slots.push({ position: 'P', role: 'setup', tier: 'regular' });
+  // クローザー1
+  slots.push({ position: 'P', role: 'closer', tier: 'star' });
+
+  // --- 1軍野手 26名 ---
+  // 捕手3
+  for (let i = 0; i < 3; i++) {
+    slots.push({ position: 'C', tier: i === 0 ? 'star' : 'bench' });
+  }
+  // 内野 各3 = 12
+  const infieldPositions: FieldPosition[] = ['1B', '2B', '3B', 'SS'];
+  for (const pos of infieldPositions) {
+    for (let i = 0; i < 3; i++) {
+      slots.push({ position: pos, tier: i === 0 ? 'star' : (i === 1 ? 'regular' : 'bench') });
+    }
+  }
+  // 外野 各3 = 9
+  const outfieldPositions: FieldPosition[] = ['LF', 'CF', 'RF'];
+  for (const pos of outfieldPositions) {
+    for (let i = 0; i < 3; i++) {
+      slots.push({ position: pos, tier: i === 0 ? 'star' : (i === 1 ? 'regular' : 'bench') });
+    }
+  }
+  // ユーティリティ/DH 2
+  slots.push({ position: 'DH', tier: 'regular' });
+  slots.push({ position: 'DH', tier: 'bench' });
+
+  // --- 育成選手 24名 (投手12 + 野手12) ---
+  const devPitcherRoles: PitcherRoleType[] = [
+    'starter', 'starter', 'starter', 'starter',
+    'reliever', 'reliever', 'reliever', 'reliever',
+    'reliever', 'reliever', 'reliever', 'reliever',
+  ];
+  for (const role of devPitcherRoles) {
+    slots.push({ position: 'P', role, isDevelopment: true, tier: 'dev' });
+  }
+  const devFieldPositions: string[] = [
+    'C', 'C', '1B', '2B', '2B', '3B', 'SS', 'SS', 'LF', 'CF', 'RF', 'RF',
+  ];
+  for (const pos of devFieldPositions) {
+    slots.push({ position: pos, isDevelopment: true, tier: 'dev' });
+  }
+
+  return slots;
+}
+
+// ---------------------------------------------------------------------------
+// 年齢生成
+// ---------------------------------------------------------------------------
+function generateAge(tier: SlotDef['tier']): number {
+  switch (tier) {
+    case 'star':
+      return randInt(25, 34);
+    case 'regular':
+      return randInt(23, 31);
+    case 'bench':
+      return randInt(22, 35);
+    case 'dev':
+      return randInt(18, 22);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 投手ステータス生成
+// ---------------------------------------------------------------------------
+function generatePitcherRow(
+  name: string,
+  teamId: string,
+  slot: SlotDef,
+): CsvPlayerRow {
+  const age = generateAge(slot.tier);
+  const role = slot.role!;
+  const isDev = slot.isDevelopment ?? false;
+
+  // tierに応じた品質係数 (0-1, 高いほど良い)
+  let quality: number;
+  switch (slot.tier) {
+    case 'star':  quality = randFloat(0.7, 1.0); break;
+    case 'regular': quality = randFloat(0.35, 0.7); break;
+    case 'bench': quality = randFloat(0.15, 0.45); break;
+    case 'dev':   quality = randFloat(0.0, 0.3); break;
+  }
+
+  const isStarter = role === 'starter';
+  const isCloser = role === 'closer';
+
+  // ERA: star投手は低ERA、dev投手は高ERA
+  const era = roundTo(5.50 - quality * 4.0, 2); // 1.50 ~ 5.50
+
+  // 勝利数
+  let wins: number;
+  if (isStarter) {
+    wins = Math.round(quality * 18); // 0-18
+  } else {
+    wins = Math.round(quality * 5); // 0-5
+  }
+
+  // セーブ
+  let saves = 0;
+  if (isCloser) {
+    saves = Math.round(quality * 40); // 0-40
+  }
+
+  // 奪三振
+  let strikeouts: number;
+  if (isStarter) {
+    strikeouts = Math.round(20 + quality * 200); // 20-220
+  } else {
+    strikeouts = Math.round(20 + quality * 80); // 20-100
+  }
+
+  // 与四球
+  const walks = Math.round(10 + (1 - quality) * 70); // 10-80
+
+  // イニング数
+  let inningsPitched: number;
+  if (isStarter) {
+    inningsPitched = roundTo(30 + quality * 170, 1); // 30-200
+  } else {
+    inningsPitched = roundTo(20 + quality * 60, 1); // 20-80
+  }
+
+  if (isDev) {
+    // 育成選手は実績が少ない
+    inningsPitched = roundTo(inningsPitched * 0.3, 1);
+    strikeouts = Math.round(strikeouts * 0.3);
+  }
+
+  // 利き手: 左腕は約30%
+  const throwHand = Math.random() < 0.3 ? 'left' : 'right';
+  const batHand = throwHand; // 投手は投げ手で打つことが多い
+
+  // 年俸: 品質と年齢に基づく
+  const baseSalary = isDev
+    ? randInt(500, 2000)
+    : Math.round(1000 + quality * 60000 + (age > 28 ? quality * 15000 : 0));
+  const salary = Math.min(80000, Math.max(1000, baseSalary));
+
+  // 外国人: チームに数名
+  const isForeign = !isDev && Math.random() < 0.08;
+
+  return {
+    name,
+    teamId,
+    position: 'P',
+    age,
+    throwHand,
+    batHand,
+    salary,
+    era,
+    wins,
+    saves,
+    strikeouts,
+    walks,
+    inningsPitched,
+    isForeign,
+    role,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 野手ステータス生成
+// ---------------------------------------------------------------------------
+function generateBatterRow(
+  name: string,
+  teamId: string,
+  slot: SlotDef,
+): CsvPlayerRow {
+  const age = generateAge(slot.tier);
+  const isDev = slot.isDevelopment ?? false;
+
+  let quality: number;
+  switch (slot.tier) {
+    case 'star':  quality = randFloat(0.7, 1.0); break;
+    case 'regular': quality = randFloat(0.35, 0.7); break;
+    case 'bench': quality = randFloat(0.15, 0.45); break;
+    case 'dev':   quality = randFloat(0.0, 0.3); break;
+  }
+
+  // 打率: .200 ~ .320
+  const battingAvg = roundTo(0.200 + quality * 0.120, 3);
+
+  // 本塁打: 0 ~ 45 (ポジションで補正)
+  let hrMax = 45;
+  if (slot.position === 'C' || slot.position === 'SS' || slot.position === '2B') {
+    hrMax = 25; // 守備職人系は長打力控えめ
+  }
+  const homeRuns = Math.round(quality * hrMax);
+
+  // 打点: 10 ~ 120
+  const rbi = Math.round(10 + quality * 110);
+
+  // 盗塁: 0 ~ 40 (足の速い選手)
+  let sbMax = 40;
+  if (slot.position === '1B' || slot.position === 'DH' || slot.position === 'C') {
+    sbMax = 10;
+  }
+  const stolenBases = Math.round(quality * sbMax * randFloat(0.0, 1.0));
+
+  // 出塁率: .280 ~ .430
+  const obp = roundTo(Math.max(battingAvg + 0.030, 0.280 + quality * 0.150), 3);
+
+  // OPS: .550 ~ 1.050
+  const slugging = roundTo(battingAvg + 0.050 + quality * 0.350, 3);
+  const ops = roundTo(Math.max(0.550, Math.min(1.050, obp + slugging)), 3);
+
+  // 利き手
+  const throwHand = slot.position === 'C' || slot.position === '1B'
+    ? (Math.random() < 0.85 ? 'right' : 'left')
+    : (Math.random() < 0.75 ? 'right' : 'left');
+
+  let batHand: string;
+  if (Math.random() < 0.15) {
+    batHand = 'switch';
+  } else if (throwHand === 'left') {
+    batHand = 'left';
+  } else {
+    batHand = Math.random() < 0.7 ? 'right' : 'left';
+  }
+
+  // 年俸
+  const baseSalary = isDev
+    ? randInt(500, 2000)
+    : Math.round(1000 + quality * 55000 + (age > 28 ? quality * 20000 : 0));
+  const salary = Math.min(80000, Math.max(1000, baseSalary));
+
+  const isForeign = !isDev && Math.random() < 0.08;
+
+  if (isDev) {
+    // 育成選手は成績を抑えめに
+    return {
+      name,
+      teamId,
+      position: slot.position,
+      age,
+      throwHand,
+      batHand,
+      salary,
+      battingAvg: roundTo(battingAvg * 0.85, 3),
+      homeRuns: Math.round(homeRuns * 0.3),
+      rbi: Math.round(rbi * 0.3),
+      stolenBases: Math.round(stolenBases * 0.3),
+      obp: roundTo(obp * 0.88, 3),
+      ops: roundTo(ops * 0.80, 3),
+      isForeign,
+    };
+  }
+
+  return {
+    name,
+    teamId,
+    position: slot.position,
+    age,
+    throwHand,
+    batHand,
+    salary,
+    battingAvg,
+    homeRuns,
+    rbi,
+    stolenBases,
+    obp,
+    ops,
+    isForeign,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// メイン生成関数
+// ---------------------------------------------------------------------------
+
+/**
+ * 全12球団の選手データを生成 (~780名)
+ * CsvPlayerRow[] を返すので、csvRowToPlayer() で Player に変換可能
+ */
+export function generateAllPlayers(): CsvPlayerRow[] {
+  const slots = buildTeamSlots();
+  const allPlayers: CsvPlayerRow[] = [];
+  const nameGen = createNameGenerator();
+
+  for (const teamId of TEAM_IDS) {
+    for (const slot of slots) {
+      const name = nameGen();
+      const isPitcher = slot.position === 'P';
+      const row = isPitcher
+        ? generatePitcherRow(name, teamId, slot)
+        : generateBatterRow(name, teamId, slot);
+      allPlayers.push(row);
+    }
+  }
+
+  return allPlayers;
+}

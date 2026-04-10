@@ -1,8 +1,8 @@
 import type { Team } from '@/types/team';
 import type { Player } from '@/types/player';
 import { TEAM_PRESETS } from '@/constants/teams';
-import { importPlayersFromCsv } from '@/data/csvImporter';
-import { SAMPLE_CSV } from '@/data/samplePlayers';
+import { csvRowToPlayer } from '@/data/csvImporter';
+import { generateAllPlayers } from '@/data/samplePlayers';
 
 /** 空のチーム成績 */
 function emptyRecord() {
@@ -29,7 +29,7 @@ function emptyFinances(broadcastRevenue: number) {
  * 初期12球団データを生成
  */
 export function createInitialTeams(): { teams: Team[]; players: Player[] } {
-  const allPlayers = importPlayersFromCsv(SAMPLE_CSV);
+  const allPlayers = generateAllPlayers().map(csvRowToPlayer);
 
   const teams: Team[] = TEAM_PRESETS.map((preset) => {
     const teamPlayers = allPlayers.filter((p) => p.teamId === preset.id);
