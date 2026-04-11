@@ -224,14 +224,22 @@ export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotati
                       setLineupDragOverIdx(null);
                     }}
                     onDragEnd={() => { setLineupDragIdx(null); setLineupDragOverIdx(null); }}
-                    className={`flex items-center gap-2 bg-gray-800 rounded p-2 cursor-grab transition ${
+                    className={`flex items-center gap-2 bg-gray-800 rounded p-2 transition ${
                       lineupDragIdx === idx ? 'opacity-40' : ''
                     } ${lineupDragOverIdx === idx && lineupDragIdx !== idx ? 'ring-2 ring-blue-400' : ''}`}
                   >
                     <span className="text-gray-500 select-none cursor-grab">⠿</span>
                     <span className="w-6 text-center text-xs text-yellow-400 font-bold">{idx + 1}</span>
-                    <span className="text-xs text-gray-500 w-6">{p.position}</span>
+                    <span className="text-xs text-gray-500 w-6">{team.lineup.positions[pid] ?? p.position}</span>
                     <span className="flex-1 text-sm">{p.name}</span>
+                    <div className="flex gap-1">
+                      {onSwapLineup && idx > 0 && (
+                        <button onClick={() => onSwapLineup(idx, idx - 1)} className="text-xs text-blue-400 px-1 bg-gray-700 rounded">↑</button>
+                      )}
+                      {onSwapLineup && idx < team.lineup.order.length - 1 && (
+                        <button onClick={() => onSwapLineup(idx, idx + 1)} className="text-xs text-blue-400 px-1 bg-gray-700 rounded">↓</button>
+                      )}
+                    </div>
                     {onReplaceLineup && (
                       <button
                         onClick={() => setLineupSwapIdx(idx)}
@@ -313,6 +321,14 @@ export function RosterScreen({ team, players, onBack, onSwapLineup, onSwapRotati
                     <span className="w-6 text-center text-xs text-green-400 font-bold">{idx + 1}</span>
                     <span className="flex-1 text-sm">{p.name}</span>
                     <span className="text-xs text-gray-500">{p.pitcherStats ? `球${statToRank(p.pitcherStats.velocity)}制${statToRank(p.pitcherStats.control)}` : ''}</span>
+                    <div className="flex gap-1">
+                      {onSwapRotation && idx > 0 && (
+                        <button onClick={() => onSwapRotation(idx, idx - 1)} className="text-xs text-blue-400 px-1 bg-gray-700 rounded">↑</button>
+                      )}
+                      {onSwapRotation && idx < team.rotation.starters.length - 1 && (
+                        <button onClick={() => onSwapRotation(idx, idx + 1)} className="text-xs text-blue-400 px-1 bg-gray-700 rounded">↓</button>
+                      )}
+                    </div>
                     {onReplaceRotation && (
                       <button
                         onClick={() => setRotationSwapIdx(idx)}
